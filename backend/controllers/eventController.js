@@ -82,7 +82,7 @@ exports.getEvents = async (req, res) => {
 exports.registerInterest = async (req, res) => {
     try {
         const { email, consent, eventId } = req.body;
-        const lead = new TicketLead({ email, consent, event: eventId });
+        const lead = new TicketLead({ email, consent, eventId });
         await lead.save();
         res.status(201).json({ message: 'Interest registered' });
     } catch (err) {
