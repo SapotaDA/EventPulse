@@ -1,20 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { AnimatePresence } from 'framer-motion';
-import { RotateCw } from 'lucide-react';
+import { RotateCw, Star } from 'lucide-react';
 import { jwtDecode } from 'jwt-decode';
 
 // Components
 import Navbar from './components/Layout/Navbar';
 import Hero from './components/Layout/Hero';
 import EventCard from './components/Events/EventCard';
-import AdminDashboard from './components/Dashboard/AdminDashboard';
 import TicketModal from './components/Modals/TicketModal';
 import LocationModal from './components/Modals/LocationModal';
 import { Toaster, toast } from 'react-hot-toast';
 import EventSkeleton from './components/UI/EventSkeleton';
+import { handleImageError } from './utils/imageHelpers';
 
 // Services
-import { fetchEvents as apiFetchEvents, triggerScrape, registerInterest, importEvent, clearDatabase } from './services/api';
+import { fetchEvents as apiFetchEvents, triggerScrape, registerInterest } from './services/api';
 
 const App = () => {
   const [events, setEvents] = useState([]);
@@ -29,7 +29,6 @@ const App = () => {
   const [showLocationModal, setShowLocationModal] = useState(false);
   const [category, setCategory] = useState('All');
   const [user, setUser] = useState(null);
-  const [view, setView] = useState('landing'); // 'landing' or 'dashboard'
 
   useEffect(() => {
     loadEvents();
@@ -38,16 +37,15 @@ const App = () => {
     if (savedUser) setUser(JSON.parse(savedUser));
   }, []);
 
-  const loadEvents = async (city = location.city) => {
+  const loadEvents = async (city = location.city, searchQuery = search, cat = category) => {
     setLoading(true);
     try {
-      const data = await apiFetchEvents(city);
-      if (data && data.error) {
-        if (data.database === 'disconnected') {
-          toast.error("Database connection issue. Check IP whitelist.");
-        }
+      const data = await apiFetchEvents(city, searchQuery);
+      if (data && data.events) {
+        setEvents(data.events);
+      } else if (Array.isArray(data)) {
+        setEvents(data);
       }
-      if (Array.isArray(data)) setEvents(data);
     } catch (err) {
       console.error('Failed to fetch events');
     } finally {
@@ -58,12 +56,7 @@ const App = () => {
   const handleRefresh = async () => {
     setLoading(true);
     try {
-      const resp = await triggerScrape(location.city);
-      if (resp.status === 401 || resp.status === 403) {
-        toast.error("Unauthorized: Admin access required");
-        await loadEvents();
-        return;
-      }
+      await triggerScrape(location.city);
       toast.success('Real-time sync complete');
       await loadEvents();
     } catch (err) {
@@ -108,38 +101,9 @@ const App = () => {
     }
   };
 
-  const handleImport = async (id) => {
-    try {
-      await importEvent(id, user);
-      loadEvents(location.city);
-    } catch (err) {
-      toast.error('Event import failed');
-    }
-  };
-
-  const handleClear = async () => {
-    if (!window.confirm('Are you sure? This will delete all scraped events and reset the database.')) return;
-    setLoading(true);
-    try {
-      const res = await clearDatabase();
-      if (res.ok) {
-        toast.success('Database has been reset');
-        await loadEvents();
-      } else {
-        toast.error('Unauthorized action');
-      }
-    } catch (err) {
-      toast.error('Clear failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const filteredEvents = events.filter(e => {
-    const matchesSearch = e.title.toLowerCase().includes(search.toLowerCase()) ||
-      e.venue?.name?.toLowerCase().includes(search.toLowerCase());
     const matchesCategory = category === 'All' || (e.category && e.category.includes(category));
-    return matchesSearch && matchesCategory;
+    return matchesCategory;
   });
 
   const handleSearch = () => {
@@ -147,27 +111,10 @@ const App = () => {
     document.getElementById('discover')?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  if (view === 'dashboard' && user) {
-    return (
-      <AdminDashboard
-        events={events}
-        loading={loading}
-        onRefresh={handleRefresh}
-        onBack={() => setView('landing')}
-        onImport={handleImport}
-        onClear={handleClear}
-        selectedEvent={selectedEvent}
-        setSelectedEvent={setSelectedEvent}
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen">
       <Navbar
         user={user}
-        view={view}
-        setView={setView}
         location={location}
         onLocationClick={() => setShowLocationModal(true)}
         onLoginSuccess={(res) => {
@@ -175,16 +122,14 @@ const App = () => {
           const userData = { ...decoded, token: res.credential };
           setUser(userData);
           localStorage.setItem('user', JSON.stringify(userData));
-          if (['aaravuniyal1@gmail.com', 'aaravuniyal3@gmail.com'].includes(decoded.email?.toLowerCase())) {
-            setView('dashboard');
-          }
         }}
         onLogout={() => {
-          setUser(null);
-          localStorage.removeItem('user');
-          setView('landing');
+          if (window.confirm('Are you sure you want to logout?')) {
+            setUser(null);
+            localStorage.removeItem('user');
+          }
         }}
-        isAdmin={['aaravuniyal1@gmail.com', 'aaravuniyal3@gmail.com'].includes(user?.email?.toLowerCase())}
+        isAdmin={false}
       />
 
       <LocationModal
@@ -207,8 +152,35 @@ const App = () => {
       />
 
       <main id="discover" className="container py-20">
+        {/* Recommended Movies Section (BookMyShow Style) */}
+        {!search && category === 'All' && events.filter(e => e.category?.includes('Movies')).length > 0 && (
+          <div className="mb-40">
+            <div className="flex-between mb-20">
+              <h3 className="section-title">Recommended Movies</h3>
+              <button className="text-primary font-600" onClick={() => setCategory('Movies')}>See All</button>
+            </div>
+            <div className="horizontal-scroll-container">
+              {events.filter(e => e.category?.includes('Movies')).slice(0, 10).map(movie => (
+                <div key={movie._id} className="movie-poster-card" onClick={() => { setSelectedEvent(movie); setShowTicketModal(true); }}>
+                  <div className="poster-wrapper">
+                    <img src={movie.imageUrl} alt={movie.title} onError={(e) => handleImageError(e, 'Movies', movie.title)} />
+                    <div className="poster-rating">
+                      <Star size={12} fill="currentColor" />
+                      <span>{movie.rating}</span>
+                    </div>
+                  </div>
+                  <h4 className="movie-title mt-10">{movie.title}</h4>
+                  <p className="movie-meta">{movie.category?.filter(c => c !== 'Movies').join('/')}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="section-header">
-          <h3>Upcoming Highlights</h3>
+          <div className="flex-gap">
+            <h3>{category === 'All' ? 'Upcoming Highlights' : `${category} in ${location.city}`}</h3>
+          </div>
           <div className="filter-chips">
             {['All', 'Movies', 'Concerts', 'Festivals', 'Food & Drink', 'Art', 'Comedy'].map(cat => (
               <button
@@ -216,11 +188,11 @@ const App = () => {
                 className={`chip ${category === cat ? 'active' : ''}`}
                 onClick={() => setCategory(cat)}
               >
-                {cat === 'All' ? 'All Events' : cat}
+                {cat}
               </button>
             ))}
-            <button className={`refresh-chip ${loading ? 'spinning' : ''}`} onClick={handleRefresh}>
-              <RotateCw size={16} /> Refresh
+            <button className="refresh-chip" onClick={handleRefresh} disabled={loading}>
+              <RotateCw size={16} className={loading ? 'spinning' : ''} /> Refresh
             </button>
           </div>
         </div>
@@ -236,8 +208,8 @@ const App = () => {
                 key={event._id}
                 event={event}
                 onClick={(ev) => {
-                  window.open(ev.originalUrl, '_blank');
-                  // Still open modal if you want to capture leads in parallel or just direct
+                  setSelectedEvent(ev);
+                  setShowTicketModal(true);
                 }}
               />
             ))}

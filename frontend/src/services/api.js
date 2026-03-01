@@ -8,9 +8,15 @@ const getAuthHeaders = () => {
     };
 };
 
-export const fetchEvents = async (city) => {
-    const res = await fetch(`${API_BASE}/events?city=${city}`);
-    return await res.json();
+export const fetchEvents = async (city = 'India', search = '') => {
+    try {
+        const response = await fetch(`${API_BASE}/events?city=${city}&search=${search}`);
+        const data = await response.json();
+        if (response.status === 503) return { ...data, database: 'disconnected' };
+        return data;
+    } catch (error) {
+        return { error: error.message, database: 'error' };
+    }
 };
 
 export const triggerScrape = async (city) => {
@@ -35,7 +41,9 @@ export const importEvent = async (id, user) => {
         headers: getAuthHeaders(),
         body: JSON.stringify({ importedBy: user.name, notes: 'Imported via dashboard' })
     });
-}; export const clearDatabase = async () => {
+};
+
+export const clearDatabase = async () => {
     return await fetch(`${API_BASE}/admin/clear`, {
         method: 'DELETE',
         headers: getAuthHeaders()

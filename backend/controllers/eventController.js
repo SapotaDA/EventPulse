@@ -1,22 +1,12 @@
 const Event = require('../models/Event');
 const TicketLead = require('../models/TicketLead');
-const { scrapeIndiaEvents, scrapeAll } = require('../utils/scraper');
+const { scrapeIndiaEvents, scrapeAll, seedMockEvents } = require('../utils/scraper');
 
 const mongoose = require('mongoose');
 
 exports.getEvents = async (req, res) => {
-    console.log(`GET /api/events?city=${req.query.city}`);
     try {
-        // If connecting, wait up to 5 seconds
-        let attempts = 0;
-        while (mongoose.connection.readyState === 2 && attempts < 10) {
-            console.log('⏳ DB is connecting... waiting 500ms');
-            await new Promise(resolve => setTimeout(resolve, 500));
-            attempts++;
-        }
-
         if (mongoose.connection.readyState !== 1) {
-            console.log('503 hit! DB state:', mongoose.connection.readyState);
             return res.status(503).json({
                 error: 'Database connection is not ready. Please check your Atlas IP whitelist.',
                 database: 'disconnected',
@@ -24,22 +14,32 @@ exports.getEvents = async (req, res) => {
             });
         }
 
-        const city = req.query.city?.toString().trim();
+        let city = req.query.city?.toString().trim();
         const search = req.query.search?.toString().trim();
         const status = req.query.status?.toString().trim();
+
+        // Locality to Major City Mapping
+        const LOCALITY_TO_CITY = {
+            'Yelahanka': 'Bangalore',
+            'Whitefield': 'Bangalore',
+            'Andheri': 'Mumbai',
+            'Bandra': 'Mumbai',
+            'Dwarka': 'Delhi',
+            'Gurugram': 'Gurgaon'
+        };
+
+        if (LOCALITY_TO_CITY[city]) {
+            console.log(`🗺️ Mapping locality ${city} to ${LOCALITY_TO_CITY[city]}`);
+            city = LOCALITY_TO_CITY[city];
+        }
+
         let query = {};
 
         if (city === 'India') {
             query.city = {
                 $in: [
                     'Mumbai', 'Delhi', 'Bangalore', 'Hyderabad', 'Chennai', 'Pune', 'Ahmedabad', 'Kolkata',
-                    'Surat', 'Jaipur', 'Lucknow', 'Kanpur', 'Nagpur', 'Indore', 'Thane', 'Bhopal',
-                    'Visakhapatnam', 'Patna', 'Vadodara', 'Ghaziabad', 'Ludhiana', 'Agra', 'Nashik',
-                    'Faridabad', 'Meerut', 'Rajkot', 'Varanasi', 'Srinagar', 'Aurangabad', 'Dhanbad',
-                    'Amritsar', 'Navi Mumbai', 'Allahabad', 'Howrah', 'Jabalpur', 'Gwalior', 'Vijayawada',
-                    'Jodhpur', 'Madurai', 'Raipur', 'Kota', 'Guwahati', 'Chandigarh', 'Solapur', 'Mysore',
-                    'Gurgaon', 'Aligarh', 'Jalandhar', 'Bhubaneswar', 'Salem', 'Warangal', 'Guntur',
-                    'Gorakhpur', 'Bikaner', 'Amravati', 'Noida', 'Jamshedpur', 'Kochi', 'Dehradun'
+                    'Jaipur', 'Gurgaon', 'Noida', 'Chandigarh', 'Lucknow', 'Indore', 'Bhopal'
                 ]
             };
         } else if (city) {
@@ -49,8 +49,8 @@ exports.getEvents = async (req, res) => {
             if (!search) {
                 const count = await Event.countDocuments({ city });
                 if (count === 0) {
-                    console.log(`🔍 No events found for ${city}. Triggering auto-scrape...`);
-                    await scrapeIndiaEvents(city);
+                    console.log(`🔍 No local events for ${city}. Triggering auto-scrape...`);
+                    await scrapeIndiaEvents(city).catch(e => console.error('Auto-scrape failed:', e.message));
                 }
             }
         }
@@ -62,26 +62,18 @@ exports.getEvents = async (req, res) => {
                 { description: { $regex: search, $options: 'i' } }
             ];
         }
-        const events = await Event.find(query).sort({ rating: -1, dateTime: 1 });
-        res.json(events);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-};
 
-exports.triggerScrape = async (req, res) => {
-    try {
-        if (mongoose.connection.readyState !== 1) {
-            throw new Error('Cannot scrape without a database connection.');
+        let events = await Event.find(query).sort({ rating: -1, dateTime: 1 });
+
+        // Final Fallback: If still nothing and was searching for a specific city, show India highlights
+        if (events.length === 0 && city && city !== 'India' && !search) {
+            console.log(`📉 Still no events for ${city}. Falling back to India highlights.`);
+            events = await Event.find({
+                city: { $in: ['Mumbai', 'Delhi', 'Bangalore'] }
+            }).sort({ rating: -1 }).limit(10);
         }
-        const { city } = req.body;
-        console.log(`Manual scrape requested for ${city || 'All'}...`);
-        if (city) {
-            await scrapeIndiaEvents(city);
-        } else {
-            await scrapeAll();
-        }
-        res.json({ message: 'Scrape completed successfully' });
+
+        res.json(events);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -90,7 +82,7 @@ exports.triggerScrape = async (req, res) => {
 exports.registerInterest = async (req, res) => {
     try {
         const { email, consent, eventId } = req.body;
-        const lead = new TicketLead({ email, consent, eventId });
+        const lead = new TicketLead({ email, consent, event: eventId });
         await lead.save();
         res.status(201).json({ message: 'Interest registered' });
     } catch (err) {
@@ -104,7 +96,7 @@ exports.importEvent = async (req, res) => {
         const event = await Event.findByIdAndUpdate(req.params.id, {
             status: 'imported',
             importedAt: new Date(),
-            importedBy: importedBy || 'Admin',
+            importedBy,
             importNotes: notes
         }, { new: true });
         res.json(event);
