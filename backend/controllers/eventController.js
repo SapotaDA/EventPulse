@@ -105,6 +105,16 @@ exports.importEvent = async (req, res) => {
     }
 };
 
+exports.triggerScrape = async (req, res) => {
+    try {
+        const { city } = req.body;
+        await scrapeAll(city);
+        res.json({ message: 'Scraping completed successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
 exports.clearDatabase = async (req, res) => {
     try {
         await Event.deleteMany({});
