@@ -37,10 +37,16 @@ const Navbar = ({ user, onLoginSuccess, onLogout, location, onLocationClick, isA
                         <div className="login-button-container">
                             <GoogleLogin
                                 onSuccess={onLoginSuccess}
-                                onError={() => console.log('Login Failed')}
+                                onError={(error) => {
+                                    console.log('Google Login Error:', error);
+                                    // Fallback: Allow user to continue without OAuth
+                                    alert('Google login failed. You can continue using the app without signing in.');
+                                }}
                                 useOneTap
                                 theme="filled_black"
                                 shape="pill"
+                                type="standard"
+                                size="large"
                             />
                         </div>
                     )}
